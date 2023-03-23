@@ -7,15 +7,15 @@ import { Response } from 'express';
 import { createReadStream } from 'fs';
 
 import { Readable } from 'stream';
-
-const configuration = new Configuration({
-  apiKey: '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',
-});
-const openai = new OpenAIApi(configuration);
+import { ConfigService } from '@nestjs/config';
+console.log('process.env.NEST_OPENAI_API_KEY', process.env);
 
 @Controller()
 export class AppController {
-  constructor(private readonly appService: AppService) {}
+  constructor(
+    private readonly appService: AppService,
+    private configService: ConfigService,
+  ) {}
 
   @Get()
   getHello(): string {
@@ -28,6 +28,10 @@ export class AppController {
     { body }: { body: any },
   ) {
     try {
+      const configuration = new Configuration({
+        apiKey: this.configService.get('NEST_OPENAI_API_KEY'),
+      });
+      const openai = new OpenAIApi(configuration);
       const completion = await openai.createCompletion({
         model: 'text-davinci-003',
         prompt: body?.question ?? '',
@@ -104,6 +108,10 @@ export class AppController {
 
   @Get('/chat-bot2')
   async getChatBot2(@Res() res: Response) {
+    const configuration = new Configuration({
+      apiKey: this.configService.get('NEST_OPENAI_API_KEY'),
+    });
+    const openai = new OpenAIApi(configuration);
     const prompt = "Sample prompt. What's 2+2?";
     const https = await import('node:https');
     const req = https.request(
@@ -151,82 +159,89 @@ export class AppController {
   }
 
   @Post('/chat-bot3')
-  async getChatBot3(@Res() res: Response, @Req() { body }: { body: any }) {
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    // res.setHeader("Access-Control-Allow-Origin", "*");
-    // res.setHeader("WithCredentials", "true");
+  async getChatBot3(@Res() res: any, @Req() { body }: { body: any }) {
+    try {
+      const configuration = new Configuration({
+        apiKey: this.configService.get('NEST_OPENAI_API_KEY'),
+      });
+      const openai = new OpenAIApi(configuration);
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('Transfer-Encoding', 'chunked');
 
-    const response = await openai
-      .createCompletion(
-        {
-          prompt: `
-          pertanyaan: 
-          ${body?.pertanyaan ?? ''}
-  
-          jawaban benar: 
-          ${body?.jawabanBenar ?? ''}
-  
-          jawaban mahasiswa: 
-          ${body?.jawabanMahasiswa ?? ''}
-  
-          instruksi: 
-          1. Berdasar jawaban benar dan jawaban mahasiswa, berikan penilaian dengan skala 1-10, dimana 1 adalah sangat tidak sesuai dan 10 adalah sangat sesuai.
-          2. Berikan penjelasan mengapa jawaban mahasiswa tidak sesuai dengan jawaban benar.
-          3. Berikan saran untuk mengatasi masalah tersebut.
-        `,
-          stream: true,
-          max_tokens: 2000,
-          temperature: 0.3,
-          model: 'text-davinci-003',
-        },
-        { responseType: 'stream' },
-      )
-      .catch((error) => {
-        console.log('error', error);
+      const response = await openai
+        .createCompletion(
+          {
+            prompt: `
+            pertanyaan: 
+            ${body?.pertanyaan ?? ''}
+    
+            jawaban benar: 
+            ${body?.jawabanBenar ?? ''}
 
-        throw error;
+            jawaban mahasiswa: 
+            ${body?.jawabanMahasiswa ?? ''}
+    
+            instruksi: 
+            1. Berdasar jawaban benar dan jawaban mahasiswa, berikan penilaian dengan skala 1-10, dimana 1 adalah sangat tidak sesuai dan 10 adalah sangat sesuai. kalimat yang terbolak balik tidak masuk dalam penilaian.
+            2. Berikan penjelasan mengapa jawaban mahasiswa tidak sesuai dengan jawaban benar.
+            3. Berikan saran jika jawaban salah. beri tahu letak salah nya.
+            
+          `,
+            stream: true,
+            max_tokens: 2048,
+            temperature: 0.4,
+            model: 'text-davinci-003',
+          },
+          { responseType: 'stream' },
+        )
+        .catch((error) => {
+          console.log('error', error);
+
+          throw error;
+        });
+
+      const stream = response.data as any as Readable;
+
+      stream
+        .on('data', (chunk) => {
+          try {
+            const data =
+              JSON.parse(chunk?.toString()?.trim()?.replace('data: ', '')) ??
+              {};
+            res.write(
+              `data: ` +
+                JSON.stringify({
+                  text:
+                    data?.choices?.[0]?.text?.trim() == ''
+                      ? `\n`
+                      : data?.choices?.[0]?.text,
+                }) +
+                '\n',
+            );
+            res.flush();
+          } catch (error) {
+            console.log('Skipable error');
+          }
+        })
+        .pipe(res);
+
+      stream.on('end', () => {
+        res.end();
       });
 
-    const stream = response.data as any as Readable;
-
-    let streamHead = true;
-    stream.on('data', (chunk) => {
-      try {
-        let data;
-        try {
-          data = JSON.parse(chunk.toString().trim().replace('data: ', ''));
-        } catch {
-          data = {};
-        }
-        console.log(data);
-
-        res.write(
+      stream.on('error', (error) => {
+        console.error(error);
+        res.end(
           JSON.stringify({
-            text:
-              data?.choices?.[0]?.text?.trim() == ''
-                ? `\n`
-                : data?.choices?.[0]?.text,
-            streamHead: streamHead,
+            error: true,
+            message: 'Error generating response.',
           }),
         );
-        streamHead = false;
-      } catch (error) {
-        console.error(error);
-        res.end();
-      }
-    });
-
-    stream.on('end', () => {
-      res.end();
-    });
-
-    stream.on('error', (error) => {
-      console.error(error);
-      res.end(
-        JSON.stringify({ error: true, message: 'Error generating response.' }),
-      );
-    });
+      });
+    } catch (error) {
+      console.log(error);
+    }
   }
 }
