@@ -158,6 +158,65 @@ export class AppController {
     // res.pipe(req);
   }
 
+  @Post('gpt-quote')
+  async gptQuote(@Res() res: any, @Req() { body }: { body: any }) {
+    try {
+      const configuration = new Configuration({
+        apiKey: this.configService.get('NEST_OPENAI_API_KEY'),
+      });
+      const openai = new OpenAIApi(configuration);
+      const response = await openai.createCompletion(
+        {
+          model: 'text-davinci-003',
+          prompt: `buat kan 1 kalimat yang menjelaskan ini dengan tambahan kata kata lucu dan bahasa non formal.
+
+          "Visi Misi Aplikasi Penilaian Essay AI Mempermudah Pengajar Universitas Terbuka" `,
+          temperature: 0.9,
+          max_tokens: 2048,
+          // top_p: 1,
+          // frequency_penalty: 0,
+          // presence_penalty: 0.6,
+          stream: true,
+          // stop: ['\n', ' Human:', ' AI:'],
+        },
+        { responseType: 'stream' },
+      );
+      // console.log('xresponse', response.data);
+      const stream = response.data as any as Readable;
+      stream
+        .on('data', (chunk) => {
+          try {
+            const data =
+              JSON.parse(chunk?.toString()?.trim()?.replace('data: ', '')) ??
+              {};
+
+            res.flush();
+          } catch (error) {
+            console.log('Skipable error');
+          }
+        })
+        .pipe(res);
+
+      stream.on('end', () => {
+        res.end();
+      });
+
+      stream.on('error', (error) => {
+        console.error(error);
+        res.end(
+          JSON.stringify({
+            error: true,
+            message: 'Error generating response.',
+          }),
+        );
+      });
+
+      // return completion.data;
+    } catch (error) {
+      console.log('error', error);
+    }
+  }
+
   @Post('/chat-bot3')
   async getChatBot3(@Res() res: any, @Req() { body }: { body: any }) {
     try {
